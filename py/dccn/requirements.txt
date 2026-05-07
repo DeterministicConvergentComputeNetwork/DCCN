@@ -1,0 +1,17 @@
+# DCCN Python Package Dependencies
+
+# Core dependencies
+typing-extensions>=4.0.0
+
+# Development dependencies (optional)
+# pytest>=7.0
+# pytest-cov>=4.0
+# black>=22.0
+# flake8>=5.0
+# mypy>=0.990
+# sphinx>=5.0
+# sphinx-rtd-theme>=1.0
+# sphinx-autodoc-typehints>=1.19
+
+# Install development dependencies with:
+# pip install -e ".[dev]"
