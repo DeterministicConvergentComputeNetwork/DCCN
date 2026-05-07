@@ -1,476 +1,305 @@
-# DCCN JavaScript Package
+# @dccn/dccn
 
-JavaScript/Node.js implementation of the Deterministic Convergent Compute Network.
+JavaScript/Node.js implementation of the **Deterministic Convergent Compute Network**.
 
-## Installation
+DCCN provides content-addressed storage, immutable hash-chained event logs, and pure-function state machines that always converge to the same state regardless of replay order.
 
-### From NPM (coming soon)
-
-```bash
-npm install dccn
-```
-
-### From Source
+## Install
 
 ```bash
-git clone https://github.com/yourusername/DCCN.git
-cd DCCN/js
-npm install
+npm install @dccn/dccn
 ```
+
+No runtime dependencies. Works in Node.js ≥ 16, modern browsers, Deno, Bun, and Cloudflare Workers.
 
 ## Quick Start
 
-### Basic Usage
-
 ```javascript
-import { canonicalHash, makeCID } from 'dccn';
+import { DCCNNode } from '@dccn/dccn';
 
-// Canonical hashing (order-independent)
-const hash1 = canonicalHash({ b: 2, a: 1 });
-const hash2 = canonicalHash({ a: 1, b: 2 });
-console.assert(hash1 === hash2);  // ✓ True
+const node = new DCCNNode();
 
-// Create content identifier
-const cid = makeCID(hash1);
-console.log(`CID: ${cid}`);
+// Store a content-addressed object
+const { cid } = await node.put({ hello: 'world' });
+console.log(cid); // bafyd807aa98243185be550c7dc372be5d7480deb1fe9bdc06a7...
+
+// Emit hash-chained events
+await node.emit('user.created', { id: 42, name: 'Alice' });
+await node.emit('user.updated', { id: 42, name: 'Alice Smith' });
+
+// Derive Merkle state root (deterministic)
+const root = await node.stateRoot();
+console.log(root); // 64-char hex
+
+// Verify the entire event chain
+const { valid } = await node.verifyChain();
+console.log(valid); // true
 ```
 
-### Event Log
+## API
+
+### `DCCNNode`
+
+The top-level object combining content-addressed storage, an event log, and a reducer-driven state machine.
 
 ```javascript
-import { EventLog, MemoryStore } from 'dccn';
+import { DCCNNode } from '@dccn/dccn';
 
-// Create event log with in-memory storage
-const log = new EventLog(new MemoryStore());
-
-// Add events
-const event1 = log.addEvent('start', { name: 'process' });
-const event2 = log.addEvent('complete', { status: 'success' });
-
-// Get current state
-const state = log.getState();
-console.log(`Events: ${state.eventCount}`);
-console.log(`State Root: ${state.stateRoot}`);
+const node = new DCCNNode();
+// or: new DCCNNode({ reducer: myCustomReducer })
 ```
 
-### Reducers for State Management
+#### Object store
 
 ```javascript
-import { Reducer, Event } from 'dccn';
+const { cid, hash } = await node.put(anyJsonValue);
+const entry = node.get(cid);           // { obj, hash }
+const result = await node.verify(cid); // { valid, storedHash, recomputedHash, cidMatch }
+```
+
+#### Event log
+
+```javascript
+const event = await node.emit('event.type', payload);
+// event: { type, payload, parent, timestampLogical, hash, cid }
+
+node.events;                         // readonly DCCNEvent[]
+const { valid, errors } = await node.verifyChain();
+```
+
+#### State machine
+
+```javascript
+node.state;                  // current DCCNState (snapshot)
+await node.replay();         // recompute state from genesis
+const root = await node.stateRoot(); // Merkle root hex string
+```
+
+`DCCNState` shape:
+```typescript
+{
+  stateRoot: string;           // Merkle state root
+  eventCount: number;
+  objectCount: number;
+  byType: Record<string, number>;
+  payloads: unknown[];
+  lastEventCid: string | null;
+  lastEventType: string | null;
+  lastEventLogical: number | null;
+}
+```
+
+#### Snapshot / restore
+
+```javascript
+const snapshot = node.export();        // { store, log }
+await node.import(snapshot);           // reset + replay
+node.reset();                          // back to genesis
+```
+
+---
+
+### `ObjectStore`
+
+Content-addressable in-memory store you can use standalone.
+
+```javascript
+import { ObjectStore } from '@dccn/dccn';
+
+const store = new ObjectStore();
+const { cid, hash } = await store.put({ x: 1 });
+const entry = store.get(cid);     // { obj, hash } | undefined
+const ok = store.has(cid);
+await store.verify(cid);          // { valid, storedHash, recomputedHash, cidMatch }
+store.size;                       // number
+store.keys();                     // IterableIterator<string>
+store.export();                   // plain object snapshot
+store.import(snapshot);
+store.clear();
+```
+
+---
+
+### `EventLog`
+
+Append-only, hash-chained event log.
+
+```javascript
+import { EventLog } from '@dccn/dccn';
+
+const log = new EventLog();
+const event = await log.append('transfer', { amount: 100 });
+log.events;                       // readonly DCCNEvent[]
+log.length;
+const { valid, errors } = await log.verify();
+log.export();
+log.import(events);
+log.reset();
+```
+
+---
+
+### Hashing
+
+```javascript
+import { sha256, sha256Sync, sha256PureJS } from '@dccn/dccn';
+
+await sha256('hello');     // async, uses fastest available (WebCrypto / node:crypto / pure-JS)
+sha256Sync('hello');       // synchronous pure-JS fallback
+sha256PureJS(uint8Array);  // pure-JS, takes Uint8Array, returns 64-char hex
+```
+
+---
+
+### Canonicalization
+
+```javascript
+import { canonicalize, canonicalJSON, canonicalHash } from '@dccn/dccn';
+
+// Deep-sort all object keys (RFC 8785 compatible subset)
+canonicalize({ b: 2, a: 1 });       // { a: 1, b: 2 }
+
+// Deterministic JSON string
+canonicalJSON({ b: 2, a: 1 });      // '{"a":1,"b":2}'
+
+// Hash a value via any async hash function
+await canonicalHash({ b: 2, a: 1 }, sha256); // 64-char hex
+```
+
+The DCCN identity invariant:
+```
+Identity(x) = SHA-256(CanonicalJSON(x))
+```
+
+---
+
+### CIDs (Content Identifiers)
+
+```javascript
+import { cidFromHash, hashFromCID, isCID } from '@dccn/dccn';
+
+const cid = cidFromHash(hexDigest);  // 'bafy' + first 44 hex chars
+hashFromCID(cid);                    // recover the 44-char hash fragment
+isCID(value);                        // boolean
+```
+
+---
+
+### Reducer utilities
+
+```javascript
+import {
+  genesisState,
+  defaultReducer,
+  applyEvent,
+  replay,
+  computeStateRoot
+} from '@dccn/dccn';
+
+// Build your own state machine
+const state0 = genesisState();
+const state1 = applyEvent(state0, event);
+
+// Replay a full event array from genesis
+const finalState = await replay(events, objectCount, myReducer);
+
+// Compute a Merkle root from CID list + object count
+const root = await computeStateRoot(cidList, objectCount);
+```
+
+---
+
+### Structural diff
+
+```javascript
+import { diff, isConvergent } from '@dccn/dccn';
+
+diff({ a: 1, b: 2 }, { a: 1, b: 3 });
+// [{ key: 'b', a: 2, b: 3, kind: 'changed' }]
+
+isConvergent(objA, objB); // true if structurally identical
+```
+
+---
+
+### Utilities
+
+```javascript
+import { bytesToHex, hexToBytes, encodeUTF8 } from '@dccn/dccn';
+// or: import { bytesToHex, hexToBytes, encodeUTF8 } from '@dccn/dccn/utils'
+```
+
+---
+
+## CLI
+
+```bash
+npx @dccn/dccn help
+npx @dccn/dccn version
+npx @dccn/dccn hash "some input"
+npx @dccn/dccn run "some payload"
+```
+
+---
+
+## Determinism guarantee
+
+DCCN enforces that replaying the same event log from genesis **always** produces the same state root:
+
+```javascript
+const node = new DCCNNode();
+await node.emit('ping', { value: 1 });
+await node.emit('ping', { value: 2 });
+
+const root1 = await node.stateRoot();
+await node.replay();
+const root2 = await node.stateRoot();
+
+console.assert(root1 === root2); // always true
+```
+
+---
+
+## Custom reducer
+
+```javascript
+import { DCCNNode } from '@dccn/dccn';
 
 function counterReducer(state, event) {
   if (event.type === 'increment') {
-    return { count: (state.count || 0) + event.amount };
-  } else if (event.type === 'decrement') {
-    return { count: (state.count || 0) - event.amount };
-  } else if (event.type === 'reset') {
-    return { count: 0 };
+    return { ...state, count: (state.count ?? 0) + (event.payload.by ?? 1) };
   }
   return state;
 }
 
-// Initialize reducer
-const reducer = new Reducer(counterReducer);
-
-// Apply events
-const initial = { count: 0 };
-const state1 = reducer.applyEvent(initial, new Event('increment', { amount: 5 }));
-const state2 = reducer.applyEvent(state1, new Event('increment', { amount: 3 }));
-console.assert(state2.count === 8);  // ✓ True
+const node = new DCCNNode({ reducer: counterReducer });
+await node.emit('increment', { by: 5 });
+await node.emit('increment', { by: 3 });
+console.log(node.state.count); // 8
 ```
 
-### Using in Browser
+---
 
-```html
-<script type="module">
-  import { canonicalHash, makeCID } from './js/index.js';
-  
-  const hash = canonicalHash({ data: 'test' });
-  console.log(`Hash: ${hash}`);
-</script>
-```
+## Building
 
-## API Reference
-
-### Core Hashing
-
-#### `canonicalHash(data) -> string`
-Generate deterministic SHA256 hash of any JavaScript object.
-
-**Parameters:**
-- `data` (any) - Object to hash (object, array, string, number, etc.)
-
-**Returns:**
-- `string` - 64-character hexadecimal hash
-
-**Example:**
-```javascript
-import { canonicalHash } from 'dccn';
-
-const hash = canonicalHash({ key: 'value' });
-// hash = 'e2d0...'
-```
-
-#### `canonicalJson(data) -> string`
-Get canonical JSON representation (sorted keys, no extra whitespace).
-
-**Parameters:**
-- `data` (any) - Object to serialize
-
-**Returns:**
-- `string` - Canonical JSON string
-
-#### `sha256Str(str) -> string`
-Hash a string directly.
-
-**Parameters:**
-- `str` (string) - String to hash
-
-**Returns:**
-- `string` - 64-character hexadecimal hash
-
-#### `sha256Bytes(bytes) -> string`
-Hash bytes directly (using SubtleCrypto or crypto module).
-
-**Parameters:**
-- `bytes` (Uint8Array | Buffer) - Bytes to hash
-
-**Returns:**
-- `string` - 64-character hexadecimal hash
-
-### Content Addressing
-
-#### `makeCID(hash, metadata = {}) -> string`
-Create a content identifier from a hash.
-
-**Parameters:**
-- `hash` (string) - Hash to create CID from
-- `metadata` (object, optional) - Metadata to include
-
-**Returns:**
-- `string` - Content identifier
-
-**Example:**
-```javascript
-import { makeCID } from 'dccn';
-
-const hash = 'abc123def456...';
-const cid = makeCID(hash);
-// cid = 'a1b2c3d4-...'
-```
-
-#### `cidToHashPrefix(cid) -> string`
-Extract hash from a content identifier.
-
-**Parameters:**
-- `cid` (string) - Content identifier
-
-**Returns:**
-- `string` - Hash prefix
-
-#### `isValidCID(cid) -> boolean`
-Validate CID format.
-
-**Parameters:**
-- `cid` (string) - String to validate
-
-**Returns:**
-- `boolean` - True if valid CID format
-
-### Event Management
-
-#### `Event` Class
-
-Represents a state change event.
-
-**Constructor:**
-```javascript
-new Event(type, payload, timestamp = null, parentHash = null)
-```
-
-**Properties:**
-- `type` (string) - Event type/action name
-- `payload` (object) - Event data
-- `timestamp` (number) - Unix timestamp
-- `parentHash` (string) - Hash of previous state
-
-**Methods:**
-- `toJSON()` - Convert to JSON representation
-- `hash()` - Get event hash
-- `equals(other)` - Compare events
-
-#### `EventLog` Class
-
-Immutable append-only event log.
-
-**Constructor:**
-```javascript
-new EventLog(store)
-```
-
-**Methods:**
-- `addEvent(type, payload) -> Event` - Add event to log
-- `getState() -> object` - Get current state
-- `getEvent(hash) -> Event` - Get event by hash
-- `getEvents(start = 0, end = null) -> Event[]` - Get events in range
-- `verify() -> boolean` - Verify log integrity
-- `replay(reducer, initialState) -> object` - Replay events through reducer
-
-**Example:**
-```javascript
-import { EventLog, MemoryStore } from 'dccn';
-
-const log = new EventLog(new MemoryStore());
-const event = log.addEvent('test', { data: 'value' });
-const state = log.getState();
-```
-
-### Reducers
-
-#### `Reducer` Class
-
-Applies events to state using a pure function.
-
-**Constructor:**
-```javascript
-new Reducer(fn)
-```
-
-**Parameters:**
-- `fn` (function) - Function with signature `(state, event) -> state`
-
-**Methods:**
-- `applyEvent(state, event) -> object` - Apply single event
-- `applyEvents(state, events) -> object` - Apply multiple events
-
-**Example:**
-```javascript
-import { Reducer, Event } from 'dccn';
-
-function myReducer(state, event) {
-  if (event.type === 'set') {
-    return { ...state, ...event.payload };
-  }
-  return state;
-}
-
-const reducer = new Reducer(myReducer);
-const newState = reducer.applyEvent({}, new Event('set', { x: 1 }));
-```
-
-#### `defaultReducer` Function
-
-Built-in identity reducer (returns state unchanged).
-
-```javascript
-import { defaultReducer } from 'dccn';
-```
-
-### Storage
-
-#### `MemoryStore` Class
-
-In-memory storage for events (suitable for testing).
-
-```javascript
-import { MemoryStore } from 'dccn';
-
-const store = new MemoryStore();
-```
-
-**Methods:**
-- `add(key, value)` - Add item
-- `get(key)` - Retrieve item
-- `all() -> object[]` - Get all items
-- `clear()` - Clear storage
-- `size` - Number of items
-
-#### `FileStore` Class (Node.js only)
-
-Persistent file-based storage.
-
-```javascript
-import { FileStore } from 'dccn';
-
-const store = new FileStore('./data');  // Creates directory if needed
-```
-
-**Methods:**
-- `add(key, value)` - Write to file
-- `get(key)` - Read from file
-- `all() -> object[]` - List all files
-- `delete(key)` - Remove file
-
-## Usage Patterns
-
-### Todo App with Reducer
-
-```javascript
-import { Reducer, EventLog, MemoryStore, Event } from 'dccn';
-
-function todoReducer(state = {}, event) {
-  if (event.type === 'add-todo') {
-    return {
-      ...state,
-      todos: [
-        ...(state.todos || []),
-        { id: event.id, text: event.text, done: false }
-      ]
-    };
-  }
-  
-  if (event.type === 'toggle-todo') {
-    return {
-      ...state,
-      todos: state.todos.map(t =>
-        t.id === event.id ? { ...t, done: !t.done } : t
-      )
-    };
-  }
-  
-  return state;
-}
-
-// Create reducer and event log
-const reducer = new Reducer(todoReducer);
-const log = new EventLog(new MemoryStore());
-
-// Add events
-log.addEvent('add-todo', { id: '1', text: 'Learn DCCN' });
-log.addEvent('add-todo', { id: '2', text: 'Build app' });
-log.addEvent('toggle-todo', { id: '1' });
-
-// Get final state
-const state = log.getState();
-console.log(state.todos);
-```
-
-### Verifying Determinism
-
-```javascript
-import { canonicalHash, canonicalJson } from 'dccn';
-
-// These all produce the same hash
-const obj1 = { a: 1, b: 2 };
-const obj2 = { b: 2, a: 1 };
-const obj3 = JSON.parse(JSON.stringify(obj1));
-
-const h1 = canonicalHash(obj1);
-const h2 = canonicalHash(obj2);
-const h3 = canonicalHash(obj3);
-
-console.assert(h1 === h2 && h2 === h3);  // ✓ Always true
+```bash
+npm run build    # produces dist/index.cjs (CommonJS bundle via esbuild)
 ```
 
 ## Testing
 
-Run the test suite:
-
 ```bash
-npm test                 # Run all tests
-npm run test:watch     # Watch mode
-npm run test:coverage  # With coverage report
+npm test
+npm run test:coverage
 ```
 
-## Linting & Formatting
+## Browser support
 
-```bash
-npm run lint           # Check code style
-npm run format         # Auto-format code
-```
-
-## Building
-
-Build for multiple environments:
-
-```bash
-npm run build          # Create CommonJS and ES modules
-```
-
-## Browser Support
-
-The package works in modern browsers:
-
-- Chrome/Edge 90+
-- Firefox 88+
-- Safari 14+
-- Node.js 16+
-
-Use the SubtleCrypto API for browser hashing (no external dependencies required).
-
-## TypeScript
-
-Type definitions are included. Use in TypeScript:
-
-```typescript
-import { canonicalHash, EventLog, MemoryStore } from 'dccn';
-
-const hash: string = canonicalHash({ x: 1 });
-const log: EventLog = new EventLog(new MemoryStore());
-```
-
-## Performance
-
-Benchmarks on typical operations:
-
-- Hashing 1MB object: ~50ms (browser), ~5ms (Node.js)
-- Creating 1000 events: ~100ms
-- Verifying log of 10000 events: ~200ms
-
-See `benchmarks/` for detailed performance tests.
-
-## Architecture
-
-The JavaScript implementation follows this structure:
-
-```
-js/
-├── index.js           # Main entry point
-├── core/              # Core algorithms
-│   ├── hash.js
-│   ├── canonicalize.js
-│   ├── cid.js
-│   ├── event.js
-│   ├── reducer.js
-│   ├── store.js
-│   └── index.js
-├── utils/             # Utility functions
-│   └── index.js
-├── dist/              # Compiled output
-│   ├── index.cjs      # CommonJS build
-│   ├── index.js       # ES modules build
-│   └── index.d.ts     # TypeScript definitions
-└── tests/             # Test suite
-```
-
-## Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Write tests for new features
-4. Run `npm test` and ensure all tests pass
-5. Run `npm run format` for code style
-6. Submit a pull request
-
-See [CONTRIBUTING.md](../../CONTRIBUTING.md) for details.
+- Chrome/Edge 90+, Firefox 88+, Safari 14+
+- Uses `WebCrypto.subtle` for hashing when available; falls back to pure-JS SHA-256 with no external dependencies.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](../../LICENSE) for details.
+GPL-3.0-or-later — see [LICENSE](./LICENSE).
 
-## Support
-
-- **Issues**: https://github.com/yourusername/DCCN/issues
-- **Discussions**: https://github.com/yourusername/DCCN/discussions
-- **Email**: xhecarpenxer@gmail.com
-
-## Version History
-
-### 0.1.0 (May 2026)
-- Initial release
-- Core hashing and canonicalization
-- Event log implementation
-- Memory storage
-- Browser and Node.js support
+© 2025–2026 James Chapman <xhecarpenxer@gmail.com>

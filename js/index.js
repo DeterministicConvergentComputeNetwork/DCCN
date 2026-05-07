@@ -21,3 +21,24 @@
 
 export * from './core/index.js';
 export * from './utils/index.js';
+export function init(config) {
+  return { status: "initialized", config };
+}
+
+export function run({ payload }) {
+  return {
+    deterministic: true,
+    input: payload,
+    output: `processed:${payload}`
+  };
+}
+
+export function hash(input) {
+  // placeholder deterministic hash (replace with real DCCN hashing later)
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = (h << 5) - h + input.charCodeAt(i);
+    h |= 0;
+  }
+  return "dccn_" + Math.abs(h).toString(16);
+}
