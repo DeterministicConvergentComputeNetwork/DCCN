@@ -1,4 +1,3 @@
-
 # DCCN — Deterministic Convergent Compute Network
 
 A deterministic, content-addressable compute system for building reproducible, verifiable distributed applications.
@@ -352,9 +351,9 @@ This ensures the project remains open-source and improvements benefit the commun
 If you use DCCN in academic work, please cite:
 
 ```bibtex
-@software{dccn2025,
+@software{dccn2026,
   title={DCCN: Deterministic Convergent Compute Network},
-  author={Chapman, James},{xhecarpenxer},
+  author={Chapman, James and xhecarpenxer},
   year={2026},
   url={https://github.com/DeterministicConvergentComputeNetwork/DCCN}
 }
@@ -379,8 +378,9 @@ If you use DCCN in academic work, please cite:
 
 ## Authors
 
-**James Chapman** - Original author and maintainer
+**James Chapman** & **xhecarpenxer** - Co-creators and maintainers
 - Email: xhecarpenxer@gmail.com
+- Repository: https://github.com/DeterministicConvergentComputeNetwork/DCCN
 
 ## Acknowledgments
 
