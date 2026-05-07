@@ -1,0 +1,434 @@
+
+<h2 class="sr-only">DCCN CLI — Deterministic Convergent Compute Network terminal interface</h2>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:transparent}
+#terminal{font-family:var(--font-mono);font-size:13px;line-height:1.6;background:#0e0e10;color:#c9d1d9;border-radius:var(--border-radius-lg);overflow:hidden;border:0.5px solid #30363d;display:flex;flex-direction:column;height:520px}
+#titlebar{background:#161b22;border-bottom:0.5px solid #30363d;padding:10px 16px;display:flex;align-items:center;gap:8px}
+.dot{width:12px;height:12px;border-radius:50%}
+.dot-r{background:#ff5f57}
+.dot-y{background:#febc2e}
+.dot-g{background:#28c840}
+#titlebar span{margin-left:auto;margin-right:auto;color:#8b949e;font-size:12px;letter-spacing:0.05em}
+#output{flex:1;overflow-y:auto;padding:12px 16px;scroll-behavior:smooth}
+.line{white-space:pre-wrap;word-break:break-all}
+.prompt-line{display:flex;gap:8px;align-items:flex-start}
+.ps1{color:#57ab5a;flex-shrink:0}
+.cmd-text{color:#c9d1d9}
+.out-ok{color:#79c0ff}
+.out-err{color:#f78166}
+.out-warn{color:#e3b341}
+.out-dim{color:#8b949e}
+.out-hash{color:#a5d6ff;font-size:11px}
+.out-bold{color:#e6edf3;font-weight:500}
+.out-success{color:#56d364}
+.out-section{color:#d2a8ff;font-weight:500;margin-top:4px}
+.sep{color:#30363d}
+#inputrow{border-top:0.5px solid #30363d;padding:10px 16px;display:flex;align-items:center;gap:8px;background:#0e0e10}
+.ps1-in{color:#57ab5a;flex-shrink:0;font-family:var(--font-mono);font-size:13px}
+#cli-input{flex:1;background:transparent;border:none;outline:none;color:#c9d1d9;font-family:var(--font-mono);font-size:13px;caret-color:#57ab5a}
+</style>
+
+<div id="terminal">
+  <div id="titlebar">
+    <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+    <span>dccn — deterministic convergent compute network</span>
+  </div>
+  <div id="output"></div>
+  <div id="inputrow">
+    <span class="ps1-in">dccn&gt;</span>
+    <input id="cli-input" autofocus autocomplete="off" spellcheck="false" placeholder="type 'help' to begin" />
+  </div>
+</div>
+
+<script>
+const out = document.getElementById('output');
+const inp = document.getElementById('cli-input');
+
+const GENESIS_STATE = {events:[],stateRoot:'0000000000000000000000000000000000000000000000000000000000000000',objectCount:0};
+let state = JSON.parse(JSON.stringify(GENESIS_STATE));
+const objectStore = new Map();
+const history = [];
+let histIdx = -1;
+
+function hexStr(bytes){return Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('')}
+
+async function sha256(str){
+  const enc = new TextEncoder().encode(typeof str==='string'?str:JSON.stringify(str));
+  const buf = await crypto.subtle.digest('SHA-256',enc);
+  return hexStr(new Uint8Array(buf));
+}
+
+function canonicalize(obj){
+  if(obj===null||typeof obj!=='object') return obj;
+  if(Array.isArray(obj)) return obj.map(canonicalize);
+  return Object.keys(obj).sort().reduce((acc,k)=>{acc[k]=canonicalize(obj[k]);return acc},{});
+}
+
+async function canonicalHash(obj){
+  const canon = canonicalize(obj);
+  const str = JSON.stringify(canon);
+  return sha256(str);
+}
+
+function cid(hash){return 'bafy'+hash.slice(0,44)}
+
+function print(text,cls=''){
+  const d=document.createElement('div');
+  d.className='line'+(cls?' '+cls:'');
+  d.textContent=text;
+  out.appendChild(d);
+  out.scrollTop=out.scrollHeight;
+}
+
+function printPrompt(cmd){
+  const row=document.createElement('div');
+  row.className='prompt-line';
+  row.innerHTML=`<span class="ps1">dccn&gt;</span><span class="cmd-text">${esc(cmd)}</span>`;
+  out.appendChild(row);
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+function sep(){print('─'.repeat(56),'sep')}
+
+async function cmdHelp(){
+  print('');
+  print('DCCN CLI  —  Deterministic Convergent Compute Network','out-bold');
+  print('');
+  print('commands','out-section');
+  sep();
+  const cmds=[
+    ['hash <value>',        'SHA-256 hash any string or JSON value'],
+    ['canonicalize <json>', 'Normalize JSON to canonical form'],
+    ['store <json>',        'Content-address and store an object'],
+    ['get <cid>',           'Retrieve object by CID'],
+    ['event <type> <json>', 'Append immutable event to log'],
+    ['replay',              'Replay all events → derive state'],
+    ['state',               'Show current derived state'],
+    ['reduce <json>',       'Apply reducer(state, event) manually'],
+    ['verify <cid>',        'Verify object integrity by CID'],
+    ['log',                 'Show immutable event log'],
+    ['stateroot',           'Compute and display Merkle state root'],
+    ['diff <cid1> <cid2>',  'Compare two stored objects'],
+    ['reset',               'Hard reset to genesis state'],
+    ['help',                'Show this help'],
+  ];
+  cmds.forEach(([cmd,desc])=>{
+    const row=document.createElement('div');
+    row.className='line';
+    row.innerHTML=`  <span style="color:#79c0ff;display:inline-block;width:200px">${esc(cmd)}</span><span style="color:#8b949e">${esc(desc)}</span>`;
+    out.appendChild(row);
+  });
+  print('');
+  print('reducer law','out-section');
+  sep();
+  print('  State(n+1) = Reducer(State(n), Event(n))','out-dim');
+  print('  Identity   = Hash(Canonical(Form))','out-dim');
+  print('  Truth      = DeterministicReplay','out-dim');
+  print('');
+}
+
+async function cmdHash(args){
+  if(!args.length){print('usage: hash <value>','out-err');return;}
+  const raw=args.join(' ');
+  let val=raw;
+  try{val=JSON.stringify(canonicalize(JSON.parse(raw)));}catch(e){}
+  const h=await sha256(val);
+  print('');
+  print('input    '+raw,'out-dim');
+  print('bytes    '+new TextEncoder().encode(val).length+' bytes','out-dim');
+  print('sha256   '+h,'out-hash');
+  print('cid      '+cid(h),'out-ok');
+  print('');
+}
+
+async function cmdCanonicalize(args){
+  if(!args.length){print('usage: canonicalize <json>','out-err');return;}
+  const raw=args.join(' ');
+  let obj;
+  try{obj=JSON.parse(raw);}catch(e){print('invalid JSON: '+e.message,'out-err');return;}
+  const canon=canonicalize(obj);
+  const canonical=JSON.stringify(canon);
+  const h=await sha256(canonical);
+  print('');
+  print('input     '+raw,'out-dim');
+  print('canonical '+canonical,'out-ok');
+  print('hash      '+h,'out-hash');
+  print('');
+}
+
+async function cmdStore(args){
+  if(!args.length){print('usage: store <json>','out-err');return;}
+  const raw=args.join(' ');
+  let obj;
+  try{obj=JSON.parse(raw);}catch(e){print('invalid JSON: '+e.message,'out-err');return;}
+  const h=await canonicalHash(obj);
+  const id=cid(h);
+  objectStore.set(id,{obj,hash:h});
+  state.objectCount++;
+  print('');
+  print('stored   '+JSON.stringify(obj),'out-dim');
+  print('hash     '+h,'out-hash');
+  print('cid      '+id,'out-ok');
+  print('objects  '+state.objectCount+' total in store','out-dim');
+  print('');
+}
+
+function cmdGet(args){
+  if(!args.length){print('usage: get <cid>','out-err');return;}
+  const id=args[0].trim();
+  const entry=objectStore.get(id);
+  if(!entry){print('not found: '+id,'out-err');return;}
+  print('');
+  print('cid      '+id,'out-ok');
+  print('object   '+JSON.stringify(entry.obj),'out-bold');
+  print('hash     '+entry.hash,'out-hash');
+  print('');
+}
+
+async function cmdEvent(args){
+  if(args.length<2){print('usage: event <type> <json>','out-err');return;}
+  const type=args[0];
+  const payloadRaw=args.slice(1).join(' ');
+  let payload;
+  try{payload=JSON.parse(payloadRaw);}catch(e){print('invalid JSON payload: '+e.message,'out-err');return;}
+  const parent=state.events.length>0?[state.events[state.events.length-1].cid]:['genesis'];
+  const logicalTime=state.events.length+1;
+  const eventObj={type,payload:canonicalize(payload),parent,timestampLogical:logicalTime};
+  const h=await canonicalHash(eventObj);
+  const id=cid(h);
+  const event={...eventObj,cid:id,hash:h};
+  objectStore.set(id,{obj:event,hash:h});
+  state.events.push(event);
+  print('');
+  print('event appended','out-success');
+  print('cid       '+id,'out-ok');
+  print('type      '+type,'out-bold');
+  print('payload   '+JSON.stringify(canonicalize(payload)),'out-dim');
+  print('parent    '+parent[0],'out-dim');
+  print('logical_t '+logicalTime,'out-dim');
+  print('');
+}
+
+function applyReducer(s,event){
+  const newState=JSON.parse(JSON.stringify(s));
+  newState.lastEventCid=event.cid;
+  newState.lastEventType=event.type;
+  newState.lastEventLogical=event.timestampLogical;
+  if(!newState.byType) newState.byType={};
+  if(!newState.byType[event.type]) newState.byType[event.type]=0;
+  newState.byType[event.type]++;
+  if(!newState.payloads) newState.payloads=[];
+  newState.payloads.push(event.payload);
+  return newState;
+}
+
+async function cmdReplay(){
+  print('');
+  print('replaying from genesis…','out-dim');
+  let s={events:[],stateRoot:'0'.repeat(64),objectCount:state.objectCount,byType:{},payloads:[],lastEventCid:null,lastEventType:null,lastEventLogical:null};
+  const sortedEvents=[...state.events].sort((a,b)=>a.timestampLogical-b.timestampLogical);
+  for(const ev of sortedEvents){
+    s=applyReducer(s,ev);
+    print('  step '+ev.timestampLogical+'  ['+ev.type+']  '+ev.cid,'out-dim');
+  }
+  const rootInput=JSON.stringify(canonicalize({events:sortedEvents.map(e=>e.cid),objectCount:s.objectCount}));
+  const rootHash=await sha256(rootInput);
+  s.stateRoot=rootHash;
+  s.events=state.events;
+  state={...state,...s};
+  print('');
+  print('replay complete','out-success');
+  print('events     '+sortedEvents.length,'out-bold');
+  print('state root '+rootHash,'out-hash');
+  print('');
+}
+
+async function cmdState(){
+  print('');
+  print('derived state','out-section');
+  sep();
+  print('events       '+state.events.length,'out-bold');
+  print('objects      '+state.objectCount,'out-bold');
+  print('state root   '+(state.stateRoot||'(run replay to compute)'),'out-hash');
+  if(state.lastEventCid){
+    print('last event   '+state.lastEventCid,'out-ok');
+    print('last type    '+state.lastEventType,'out-dim');
+    print('logical time '+state.lastEventLogical,'out-dim');
+  }
+  if(state.byType&&Object.keys(state.byType).length){
+    print('');
+    print('event counts by type','out-dim');
+    Object.entries(state.byType).forEach(([k,v])=>print('  '+k+': '+v,'out-dim'));
+  }
+  print('');
+}
+
+async function cmdReduce(args){
+  if(!args.length){print('usage: reduce <event_json>','out-err');return;}
+  const raw=args.join(' ');
+  let event;
+  try{event=JSON.parse(raw);}catch(e){print('invalid JSON: '+e.message,'out-err');return;}
+  if(!event.type){print('event must have a type field','out-err');return;}
+  const prev=JSON.parse(JSON.stringify(state));
+  const next=applyReducer(state,{...event,cid:event.cid||'(unregistered)',timestampLogical:event.timestampLogical||0});
+  print('');
+  print('reducer(State, Event) → State\'','out-section');
+  sep();
+  print('input event  '+JSON.stringify(canonicalize(event)),'out-dim');
+  print('prev root    '+(prev.stateRoot||'(none)'),'out-dim');
+  const nextRoot=await sha256(JSON.stringify(canonicalize(next)));
+  print('next root    '+nextRoot,'out-hash');
+  print('');
+  print('state delta','out-dim');
+  if(next.lastEventType!==prev.lastEventType) print('  lastEventType: '+prev.lastEventType+' → '+next.lastEventType,'out-ok');
+  print('');
+}
+
+async function cmdVerify(args){
+  if(!args.length){print('usage: verify <cid>','out-err');return;}
+  const id=args[0].trim();
+  const entry=objectStore.get(id);
+  if(!entry){print('not found: '+id,'out-err');return;}
+  const recomputed=await canonicalHash(entry.obj);
+  const expectedHash=id.replace(/^bafy/,'');
+  const ok=recomputed===entry.hash;
+  const cidMatch=cid(recomputed)===id;
+  print('');
+  print('verify '+id,'out-dim');
+  print('stored hash    '+entry.hash,'out-hash');
+  print('recomputed     '+recomputed,'out-hash');
+  print('hash match     '+(ok?'✓ VALID':'✗ CORRUPT'),(ok?'out-success':'out-err'));
+  print('cid match      '+(cidMatch?'✓ VALID':'✗ MISMATCH'),(cidMatch?'out-success':'out-err'));
+  print('');
+}
+
+function cmdLog(){
+  print('');
+  if(!state.events.length){print('event log is empty. use: event <type> <json>','out-dim');print('');return;}
+  print('immutable event log','out-section');
+  sep();
+  state.events.forEach((ev,i)=>{
+    print('['+String(i+1).padStart(3,'0')+'] '+ev.type,'out-bold');
+    print('      cid     '+ev.cid,'out-ok');
+    print('      payload '+JSON.stringify(ev.payload),'out-dim');
+    print('      parent  '+ev.parent[0],'out-dim');
+    print('      t       '+ev.timestampLogical,'out-dim');
+    if(i<state.events.length-1) print('');
+  });
+  print('');
+}
+
+async function cmdStateRoot(){
+  const input=JSON.stringify(canonicalize({events:state.events.map(e=>e.cid),objectCount:state.objectCount}));
+  const root=await sha256(input);
+  state.stateRoot=root;
+  print('');
+  print('merkle state root','out-section');
+  sep();
+  print('inputs: '+state.events.length+' events, '+state.objectCount+' objects','out-dim');
+  print('root:   '+root,'out-hash');
+  print('cid:    '+cid(root),'out-ok');
+  print('');
+}
+
+async function cmdDiff(args){
+  if(args.length<2){print('usage: diff <cid1> <cid2>','out-err');return;}
+  const a=objectStore.get(args[0]);const b=objectStore.get(args[1]);
+  if(!a){print('not found: '+args[0],'out-err');return;}
+  if(!b){print('not found: '+args[1],'out-err');return;}
+  print('');
+  print('diff','out-section');
+  sep();
+  print('A  '+args[0],'out-ok');
+  print('B  '+args[1],'out-warn');
+  print('');
+  const keysA=Object.keys(a.obj),keysB=Object.keys(b.obj);
+  const all=new Set([...keysA,...keysB]);
+  let diffs=0;
+  all.forEach(k=>{
+    const va=JSON.stringify(a.obj[k]),vb=JSON.stringify(b.obj[k]);
+    if(va!==vb){
+      print('~ '+k,'out-warn');
+      print('  A: '+(va||'(missing)'),'out-ok');
+      print('  B: '+(vb||'(missing)'),'out-err');
+      diffs++;
+    }
+  });
+  if(!diffs) print('objects are identical','out-success');
+  else print('');
+  print('hashes: '+a.hash+' vs '+b.hash,'out-hash');
+  print('same:   '+(a.hash===b.hash?'yes — convergent':'no — divergent'),(a.hash===b.hash?'out-success':'out-err'));
+  print('');
+}
+
+function cmdReset(){
+  state=JSON.parse(JSON.stringify(GENESIS_STATE));
+  objectStore.clear();
+  print('');
+  print('reset to genesis','out-warn');
+  print('state root: 0000…0000','out-dim');
+  print('event log:  empty','out-dim');
+  print('');
+}
+
+async function run(line){
+  const trimmed=line.trim();
+  if(!trimmed) return;
+  history.unshift(trimmed);
+  histIdx=-1;
+  printPrompt(trimmed);
+  const [cmd,...args]=trimmed.split(/\s+/);
+  switch(cmd.toLowerCase()){
+    case 'help':     await cmdHelp();break;
+    case 'hash':     await cmdHash(args);break;
+    case 'canonicalize': await cmdCanonicalize(args);break;
+    case 'store':    await cmdStore(args);break;
+    case 'get':      cmdGet(args);break;
+    case 'event':    await cmdEvent(args);break;
+    case 'replay':   await cmdReplay();break;
+    case 'state':    await cmdState();break;
+    case 'reduce':   await cmdReduce(args);break;
+    case 'verify':   await cmdVerify(args);break;
+    case 'log':      cmdLog();break;
+    case 'stateroot':await cmdStateRoot();break;
+    case 'diff':     await cmdDiff(args);break;
+    case 'reset':    cmdReset();break;
+    case 'clear':    out.innerHTML='';break;
+    default:
+      print('unknown command: '+cmd+' — type help','out-err');
+  }
+}
+
+inp.addEventListener('keydown',async e=>{
+  if(e.key==='Enter'){
+    const val=inp.value;
+    inp.value='';
+    await run(val);
+  } else if(e.key==='ArrowUp'){
+    e.preventDefault();
+    if(histIdx<history.length-1){histIdx++;inp.value=history[histIdx];}
+  } else if(e.key==='ArrowDown'){
+    e.preventDefault();
+    if(histIdx>0){histIdx--;inp.value=history[histIdx];}
+    else{histIdx=-1;inp.value='';}
+  }
+});
+
+document.getElementById('terminal').addEventListener('click',()=>inp.focus());
+
+(async()=>{
+  print('DCCN CLI  v0.1.0','out-bold');
+  print('Deterministic Convergent Compute Network','out-dim');
+  print('');
+  print('  Identity = Hash(Canonical(Form))','out-dim');
+  print('  Truth    = DeterministicReplay','out-dim');
+  print('  Law      = State(n+1) = Reducer(State(n), Event(n))','out-dim');
+  print('');
+  print("type 'help' for commands",'out-dim');
+  print('');
+  inp.focus();
+})();
+</script>
