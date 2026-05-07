@@ -1,3 +1,22 @@
+# DCCN — Deterministic Convergent Compute Network
+# Copyright (C) 2026 James Chapman, xhecarpenxer
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Repository: https://github.com/DeterministicConvergentComputeNetwork/DCCN
+# Contact: xhecarpenxer@gmail.com
+
 """Setup configuration for DCCN Python package."""
 
 from setuptools import setup, find_packages
@@ -10,16 +29,16 @@ long_description = (here.parent / "README.md").read_text(encoding="utf-8")
 setup(
     name="dccn",
     version="0.1.0",
-    author="James Chapman",
+    author="James Chapman, xhecarpenxer",
     author_email="xhecarpenxer@gmail.com",
     description="Deterministic Convergent Compute Network",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/DCCN",
+    url="https://github.com/DeterministicConvergentComputeNetwork/DCCN",
     project_urls={
-        "Bug Tracker": "https://github.com/yourusername/DCCN/issues",
-        "Documentation": "https://github.com/yourusername/DCCN/wiki",
-        "Source Code": "https://github.com/yourusername/DCCN",
+        "Bug Tracker": "https://github.com/DeterministicConvergentComputeNetwork/DCCN/issues",
+        "Documentation": "https://github.com/DeterministicConvergentComputeNetwork/DCCN/wiki",
+        "Source Code": "https://github.com/DeterministicConvergentComputeNetwork/DCCN",
     },
     packages=find_packages(),
     classifiers=[
