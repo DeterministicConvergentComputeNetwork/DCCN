@@ -39,19 +39,24 @@
     "content-addressing",
     "reproducible"
   ],
-  "author": {
-    "name": "James Chapman",
-    "email": "xhecarpenxer@gmail.com"
-  },
+  "author": [
+    {
+      "name": "James Chapman",
+      "email": "xhecarpenxer@gmail.com"
+    },
+    {
+      "name": "xhecarpenxer"
+    }
+  ],
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/DCCN"
+    "url": "https://github.com/DeterministicConvergentComputeNetwork/DCCN"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/DCCN/issues"
+    "url": "https://github.com/DeterministicConvergentComputeNetwork/DCCN/issues"
   },
-  "homepage": "https://github.com/yourusername/DCCN#readme",
+  "homepage": "https://github.com/DeterministicConvergentComputeNetwork/DCCN#readme",
   "devDependencies": {
     "@types/node": "^20.0.0",
     "eslint": "^8.0.0",
